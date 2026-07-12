@@ -9,8 +9,10 @@ This is the *"can you run Kubernetes on AWS?"* project — the day-to-day platfo
 skill most Cloud/DevOps roles ask for, on top of the serverless, container,
 IaC, CI/CD, observability, and security work in my other repos.
 
-**Status:** 🚧 Built in public, stage by stage (see the roadmap). Honest from
-commit one — checkboxes are ticked only when the thing is actually running.
+**Status:** 🚧 Built in public. All stages are **code-complete, pushed, and
+Terraform-validated**; the one honest gap is the live **apply → prove → destroy**
+burst (Stage 5's drills produce measured evidence — those tables stay blank until
+a real run, no fabricated numbers).
 
 > **Cost & operating model.** An EKS control plane bills ~$0.10/hr **the whole
 > time it exists**, unlike a fully free-tier serverless stack — so this project
@@ -54,23 +56,20 @@ GitHub Actions (OIDC, no keys)
 
 ## Roadmap
 
-- [ ] **Stage 0 — Foundation.** Repo + this plan committed first. Reuse the
-  existing GitHub OIDC provider; create a repo-scoped deploy role and an ECR
-  repository (scan-on-push).
-- [ ] **Stage 1 — The app.** A small containerized HTTP microservice (its own
-  image + Dockerfile) with `/health` and an endpoint that reports which pod
-  served the request (so load-balancing and self-healing are visible). Helm
-  chart / manifests.
-- [ ] **Stage 2 — EKS in Terraform.** VPC, an EKS cluster + managed node group,
-  cluster IRSA/OIDC, least-privilege node role. `plan`-clean, not yet applied.
-- [ ] **Stage 3 — Platform layer.** AWS Load Balancer Controller (via IRSA) →
-  ALB Ingress; Metrics Server; a Horizontal Pod Autoscaler on the app.
-- [ ] **Stage 4 — CI/CD.** GitHub Actions builds the image → ECR → deploys to
-  the cluster over OIDC (no static keys). Rolling update on push.
-- [ ] **Stage 5 — Operate & prove.** CloudWatch Container Insights; a
-  **pod-failure drill** (delete a pod, watch the ReplicaSet self-heal) and an
-  **HPA load test** (drive CPU, watch it scale out) — with measured evidence and
-  a runbook. Then `terraform destroy`.
+- [x] **Stage 0 — Foundation.** Repo + this plan committed first; reused the
+  existing GitHub OIDC provider; created a repo-scoped deploy role + ECR repo.
+- [x] **Stage 1 — The app.** Containerized FastAPI microservice (`/health`, `/`
+  reports the serving pod, `/burn` drives CPU) + hardened Kubernetes manifests.
+- [x] **Stage 2 — EKS in Terraform.** VPC, EKS cluster + managed node group,
+  IRSA/OIDC, EKS access entry for CI. `validate`-clean.
+- [x] **Stage 3 — Platform layer.** AWS Load Balancer Controller (IRSA) → ALB
+  Ingress; Metrics Server; a CPU Horizontal Pod Autoscaler (2→6).
+- [x] **Stage 4 — CI/CD.** GitHub Actions builds the image → ECR → deploys over
+  OIDC (no static keys), and skips cleanly when the cluster is destroyed.
+- [ ] **Stage 5 — Operate & prove.** ⏳ *Awaiting a live apply burst:* a
+  **pod-failure drill** (self-heal) and an **HPA load test** (scale-out), with
+  measured evidence filled into [`docs/runbook-and-drills.md`](docs/runbook-and-drills.md).
+  Then `terraform destroy`.
 
 ## Design decisions (recorded as I go)
 

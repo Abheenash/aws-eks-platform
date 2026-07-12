@@ -1,0 +1,74 @@
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", "k8s/**", ".github/workflows/deploy.yml"]
+  workflow_dispatch:
+
+# Keyless auth to AWS via GitHub OIDC — no static access keys anywhere.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: aws-eks-platform
+  CLUSTER: eks-platform
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.img.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image (linux/amd64)
+        id: img
+        env:
+          REG: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE="$REG/$ECR_REPO:${GITHUB_SHA::12}"
+          # EKS nodes are amd64 — build for the target platform explicitly
+          # (the arm64->amd64 lesson from secure-container-pipeline).
+          docker build --platform linux/amd64 -t "$IMAGE" -t "$REG/$ECR_REPO:latest" app/
+          docker push "$IMAGE"
+          docker push "$REG/$ECR_REPO:latest"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to EKS (skips cleanly if the cluster is destroyed)
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+        run: |
+          if ! aws eks describe-cluster --name "$CLUSTER" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "::notice::Cluster '$CLUSTER' not found — build->prove->destroy model, skipping deploy. Image is pushed to ECR and ready."
+            exit 0
+          fi
+          aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
+          kubectl apply -f k8s/
+          kubectl -n demo set image deployment/web app="$IMAGE"
+          kubectl -n demo rollout status deployment/web --timeout=180s
+          kubectl -n demo get pods -o wide
