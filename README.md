@@ -9,10 +9,11 @@ This is the *"can you run Kubernetes on AWS?"* project — the day-to-day platfo
 skill most Cloud/DevOps roles ask for, on top of the serverless, container,
 IaC, CI/CD, observability, and security work in my other repos.
 
-**Status:** 🚧 Built in public. All stages are **code-complete, pushed, and
-Terraform-validated**; the one honest gap is the live **apply → prove → destroy**
-burst (Stage 5's drills produce measured evidence — those tables stay blank until
-a real run, no fabricated numbers).
+**Status:** ✅ **All stages complete — applied live and proven, then destroyed.**
+A real `apply → deploy → drills → destroy` burst on 2026-07-12 stood up the cluster
+(66 resources), ran both resilience drills with **measured** evidence (pod self-heal
+in 7s; HPA scaled 2→6 in ~60s), and tore everything down. Full numbers +
+honest findings in [`docs/RESULTS-2026-07-12.md`](docs/RESULTS-2026-07-12.md).
 
 > **Cost & operating model.** An EKS control plane bills ~$0.10/hr **the whole
 > time it exists**, unlike a fully free-tier serverless stack — so this project
@@ -66,10 +67,11 @@ GitHub Actions (OIDC, no keys)
   Ingress; Metrics Server; a CPU Horizontal Pod Autoscaler (2→6).
 - [x] **Stage 4 — CI/CD.** GitHub Actions builds the image → ECR → deploys over
   OIDC (no static keys), and skips cleanly when the cluster is destroyed.
-- [ ] **Stage 5 — Operate & prove.** ⏳ *Awaiting a live apply burst:* a
-  **pod-failure drill** (self-heal) and an **HPA load test** (scale-out), with
-  measured evidence filled into [`docs/runbook-and-drills.md`](docs/runbook-and-drills.md).
-  Then `terraform destroy`.
+- [x] **Stage 5 — Operate & prove.** ✅ *Executed live 2026-07-12:* a
+  **pod-failure drill** (self-heal in 7s; honest 3/400 failed requests during
+  ALB deregistration) and an **HPA load test** (scaled 2→6 in ~60s). Evidence in
+  [`docs/runbook-and-drills.md`](docs/runbook-and-drills.md) +
+  [`docs/RESULTS-2026-07-12.md`](docs/RESULTS-2026-07-12.md). Then `terraform destroy`.
 
 ## Design decisions (recorded as I go)
 

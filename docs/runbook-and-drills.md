@@ -31,13 +31,17 @@ for i in $(seq 1 200); do curl -s -o /dev/null -w "%{http_code} " "http://$ALB/"
 **Expected:** a new pod reaches `Running`/`Ready` within seconds; the curl loop
 stays all `200` (the deleted pod is drained via readiness before it dies).
 
-**Results**
+**Results** (measured 2026-07-12 — see [`RESULTS-2026-07-12.md`](RESULTS-2026-07-12.md))
 
 | Metric | Value |
 |---|---|
-| Time to new pod `Ready` | `<fill after run>` |
-| Failed requests during recovery | `<fill after run>` |
-| Pods observed serving (before → after) | `<fill after run>` |
+| Time to new pod `Ready` (back to 2/2) | **7 s** |
+| Failed requests during recovery | **3 / 400** (2×502, 1×000 ≈ 0.75%) |
+| Pods observed serving (before → after) | even 10/10 split → replaced, back to 2/2 |
+
+> Honest finding: not fully zero-downtime — a couple of 502s while the ALB was
+> still routing to the terminating pod before deregistration completed. Fix: a
+> `preStop` drain + longer `deregistration_delay`.
 
 ---
 
@@ -62,14 +66,19 @@ pkill -f "curl -s http://$ALB/burn"
 **Expected:** replicas rise toward `maxReplicas: 6` within ~1–3 min, then return
 to `minReplicas: 2` after the default 5-min stabilization window.
 
-**Results**
+**Results** (measured 2026-07-12 — see [`RESULTS-2026-07-12.md`](RESULTS-2026-07-12.md))
 
 | Metric | Value |
 |---|---|
-| Peak CPU utilization | `<fill after run>` |
-| Replicas: min → peak | `<fill after run>` |
-| Time to first scale-out | `<fill after run>` |
-| Time to scale back in | `<fill after run>` |
+| Peak CPU utilization | ~300% of request (hit the 300m limit) |
+| Replicas: min → peak | **2 → 6** (the cap) |
+| Time to first scale-out (2→4) | **~45 s** |
+| Time to reach max (→6) | **~60 s** |
+| Scale back in | default 5-min stabilization window (not waited out — cost) |
+
+> Honest finding: one pod restarted once under peak load — its liveness probe
+> tripped when the CPU busy-loop starved `/health`. Lesson: don't let CPU-bound
+> work share the request path with the liveness endpoint.
 
 ---
 
