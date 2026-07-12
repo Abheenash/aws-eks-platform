@@ -1,0 +1,22 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+
+# Kube / local
+kubeconfig*
+*.pem
+
+# Python / build
+__pycache__/
+*.pyc
+build/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
