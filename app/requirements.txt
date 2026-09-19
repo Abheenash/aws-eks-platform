@@ -1,4 +1,2 @@
 fastapi==0.141.1
 uvicorn[standard]==0.53.0
-# transitive pins: Trivy HIGH findings below these versions
-msgpack>=1.2.1
