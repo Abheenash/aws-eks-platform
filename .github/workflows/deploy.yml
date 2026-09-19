@@ -16,8 +16,11 @@ env:
   ECR_REPO: aws-eks-platform
   CLUSTER: eks-platform
 
+# The cluster runs build -> prove -> destroy, so deploys are opt-in: set the
+# repository variable DEPLOY_ENABLED=true while the cluster is up.
 jobs:
   build:
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.img.outputs.image }}
