@@ -1,0 +1,11 @@
+# During node drains (upgrades, spot reclaim, cluster-autoscaler scale-in) never
+# evict below one healthy replica — a voluntary disruption can't take the app down.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web
+  namespace: demo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: web }

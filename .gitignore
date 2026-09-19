@@ -20,3 +20,6 @@ build/
 .DS_Store
 .idea/
 .vscode/
+
+.pytest_cache/
+__pycache__/

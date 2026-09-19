@@ -1,0 +1,58 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  app-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r app/requirements.txt -r tests/requirements.txt
+      - run: python -m pytest tests -q
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: kubeconform (strict schema validation)
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary k8s/*.yaml
+      - name: policy — the drill fixes must stay in place
+        run: |
+          python3 - <<'EOF'
+          import yaml, sys
+          dep = yaml.safe_load(open("k8s/deployment.yaml"))
+          c = dep["spec"]["template"]["spec"]["containers"][0]
+          spec = dep["spec"]["template"]["spec"]
+          assert "sleep" in " ".join(c["lifecycle"]["preStop"]["exec"]["command"]), "preStop drain missing"
+          assert spec["terminationGracePeriodSeconds"] > 15, "grace period must exceed the preStop sleep"
+          assert c["livenessProbe"]["httpGet"]["path"] != c["readinessProbe"]["httpGet"]["path"], "liveness and readiness must be different endpoints"
+          assert c["livenessProbe"]["timeoutSeconds"] >= 3 and c["livenessProbe"]["failureThreshold"] >= 3
+          assert c["securityContext"]["readOnlyRootFilesystem"] and not c["securityContext"]["allowPrivilegeEscalation"]
+          assert "limits" in c["resources"] and "requests" in c["resources"]
+          ing = yaml.safe_load(open("k8s/ingress.yaml"))
+          attrs = ing["metadata"]["annotations"]["alb.ingress.kubernetes.io/target-group-attributes"]
+          assert "deregistration_delay.timeout_seconds=15" in attrs, "deregistration delay must match preStop"
+          assert ing["metadata"]["annotations"]["alb.ingress.kubernetes.io/healthcheck-path"] == "/ready"
+          pdb = yaml.safe_load(open("k8s/pdb.yaml"))
+          assert pdb["spec"]["minAvailable"] >= 1
+          print("manifest policy ok")
+          EOF
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform -chdir=terraform fmt -check -diff
+      - run: terraform -chdir=terraform init -backend=false
+      - run: terraform -chdir=terraform validate
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --platform linux/amd64 -t eks-demo:ci app/
+      - run: test "$(docker run --rm --entrypoint id eks-demo:ci -u)" = "10001"
+      - name: trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 eks-demo:ci

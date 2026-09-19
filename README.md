@@ -23,6 +23,19 @@ honest findings in [`docs/RESULTS-2026-07-12.md`](docs/RESULTS-2026-07-12.md).
 > makes it reproducible on demand for interviews. Cost breakdown in
 > [`docs/cost.md`](docs/cost.md).
 
+## v2 (Sep 2026) — the drill findings, fixed and pinned
+
+The 2026-07-12 run was honest about two things a happy-path demo hides. Both are now fixes, with a CI policy check so they can't regress:
+
+| Finding | Fix |
+| --- | --- |
+| **3 of 400 requests got 502** while a pod was replaced — the ALB kept routing to the terminating pod (default deregistration delay is 300 s; the pod was gone long before). | Three parts that agree with each other: the app flips **`/ready` to 503 on SIGTERM** while still serving; a **`preStop` sleep of 15 s** keeps the pod alive while the ALB deregisters it; the Ingress sets **`deregistration_delay = 15 s`** and health-checks `/ready`; `terminationGracePeriodSeconds: 45` so nothing is force-killed mid-drain. |
+| **A pod restarted under load** — its liveness probe timed out at the default 1 s while `/burn`'s pure-Python busy loop held the GIL. | `/burn` runs in a **child process**, so the API process (and its probe) stays responsive; liveness (`/healthz`) and readiness (`/ready`) are **separate endpoints**; the liveness probe has a 3 s timeout and 3 misses; a `startupProbe` covers cold start. A test starts a 1.5 s burn and asserts `/healthz` answers in under 0.5 s. |
+
+Also: a **PodDisruptionBudget** (`minAvailable: 1`) so node drains can't evict below one replica, `revisionHistoryLimit`, structured JSON access logs with the pod name, API docs disabled, and a CI workflow — pytest, **kubeconform strict** validation, a **manifest policy check** (preStop present, grace > sleep, distinct probe endpoints, deregistration delay matching, PDB present), `terraform validate`, and an image build with a non-root assertion and Trivy.
+
+The cluster is torn down (build → prove → destroy), so the fixes are validated, not re-drilled; re-running the self-heal drill to confirm 0 of 400 is the next live session.
+
 ## Why this project
 
 My portfolio already shows **build → ship → operate** across serverless and

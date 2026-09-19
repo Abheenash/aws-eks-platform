@@ -8,6 +8,7 @@ spec:
   replicas: 2
   selector:
     matchLabels: { app: web }
+  revisionHistoryLimit: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -28,6 +29,14 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         seccompProfile: { type: RuntimeDefault }
+      # Drill finding (docs/RESULTS-2026-07-12.md): 3 of 400 requests got 502s while a
+      # pod was replaced, because the ALB kept routing to it after SIGTERM. The fix has
+      # three parts that must agree:
+      #   1. preStop sleeps 15 s -> the pod keeps serving while the ALB deregisters it
+      #      (the app also flips /ready to 503 on SIGTERM so the target drains first)
+      #   2. the Ingress sets deregistration_delay = 15 s (default is 300 s)
+      #   3. terminationGracePeriodSeconds > preStop + the drain -> no forced kill
+      terminationGracePeriodSeconds: 45
       containers:
         - name: app
           # CI overrides the tag via `kubectl set image`; :v1 is the default.
@@ -45,14 +54,29 @@ spec:
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { cpu: "300m", memory: "256Mi" }
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 15"]
+          # Liveness and readiness are different questions and different endpoints:
+          # /healthz only proves the process answers; /ready says "send me traffic".
+          # Drill finding: a pod restarted under load because the probe timed out at
+          # the default 1 s while a busy-loop held the GIL. The loop now runs in a child
+          # process (app/main.py), and the probe gets a realistic timeout and 3 misses.
+          startupProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 2
+            failureThreshold: 15   # up to 30 s to start before liveness kicks in
           readinessProbe:
-            httpGet: { path: /health, port: 8080 }
-            initialDelaySeconds: 3
+            httpGet: { path: /ready, port: 8080 }
             periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
           livenessProbe:
-            httpGet: { path: /health, port: 8080 }
-            initialDelaySeconds: 10
+            httpGet: { path: /healthz, port: 8080 }
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
