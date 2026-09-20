@@ -1,5 +1,7 @@
 # AWS EKS Platform — a production-shaped Kubernetes app on AWS
 
+> **Sep 2026:** both drill findings fixed — preStop drain + readiness 503 on SIGTERM + 15 s deregistration delay; CPU work in a child process with separate liveness/readiness/startup probes; PDB; kubeconform + manifest policy CI; runtime image without pip (validated, not re-drilled).
+
 Running a containerized microservice on **Amazon EKS** the way a real team would:
 provisioned entirely in **Terraform**, exposed through an **ALB Ingress**,
 **auto-scaled** on load, deployed by a **keyless GitHub Actions pipeline**, and
