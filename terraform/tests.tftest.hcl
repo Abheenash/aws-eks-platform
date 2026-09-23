@@ -7,6 +7,44 @@
 # assert, using `terraform test`'s ability to check that a validation rejects what
 # it is supposed to reject.
 
+# Mocked so the plan needs no credentials. Without these the test passes on a
+# developer's laptop (which has AWS config) and fails in CI (which does not) —
+# a test that depends on who is running it is not a test.
+mock_provider "aws" {
+  # main.tf slices the first two AZs; a mocked data source returns an empty list,
+  # so slice() errors before any assertion can run.
+  override_data {
+    target = data.aws_availability_zones.available
+    values = { names = ["us-east-1a", "us-east-1b"] }
+  }
+}
+mock_provider "kubernetes" {}
+mock_provider "helm" {}
+
+# The EKS, Karpenter and pod-identity modules are third-party and build IAM from
+# data sources a mocked provider cannot satisfy. Nothing asserted here touches
+# them — these tests are about this repo's INPUT CONTRACT — so they are replaced
+# wholesale rather than mocked resource by resource.
+override_module {
+  target  = module.eks
+  outputs = {}
+}
+
+override_module {
+  target  = module.vpc
+  outputs = {}
+}
+
+override_module {
+  target  = module.karpenter
+  outputs = {}
+}
+
+override_module {
+  target  = module.alb_pod_identity
+  outputs = {}
+}
+
 variables {
   cluster_version = "1.35"
 }
