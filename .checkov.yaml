@@ -1,0 +1,14 @@
+# Checkov config. `skip-check` is a REVIEWED baseline — each entry is an accepted
+# trade-off or a demonstrated false positive, with the reason. Everything else is
+# a hard gate: a NEW category of misconfiguration in a PR fails the build.
+directory:
+  - terraform
+compact: true
+quiet: true
+skip-check:
+  # CKV_TF_1 wants every module source pinned to a git commit hash. These are
+  # Terraform REGISTRY modules (terraform-aws-modules/eks, /vpc, /eks-pod-identity),
+  # which are versioned by the registry and pinned with `version = "~> 21.0"` plus
+  # a committed .terraform.lock.hcl. There is no commit hash to give — the check
+  # only applies to git-sourced modules.
+  - CKV_TF_1
