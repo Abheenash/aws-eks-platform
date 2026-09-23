@@ -1,0 +1,24 @@
+# OpenShift's native ingress object. The EKS side uses an Ingress with
+# ALB-controller annotations; none of those annotations mean anything here, and
+# the TLS story is inverted — the Route terminates TLS with the cluster's own
+# wildcard certificate, so there is no ACM ARN to wire up.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: web
+  namespace: demo
+  labels: { app: web }
+  annotations:
+    # The EKS equivalent is the ALB's deregistration_delay = 15s, set as an
+    # Ingress annotation. Same intent, different owner: here it is the router.
+    haproxy.router.openshift.io/timeout: 30s
+spec:
+  to:
+    kind: Service
+    name: web
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

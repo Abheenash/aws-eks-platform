@@ -1,20 +1,22 @@
 # Platform layer: the AWS Load Balancer Controller (turns Ingress objects into
 # ALBs) and the Metrics Server (feeds CPU metrics to the HorizontalPodAutoscaler).
 
-# IRSA role for the controller — the preset attaches AWS's official, scoped
-# load-balancer-controller policy, so the pod gets exactly the permissions it
-# needs (create/manage ALBs, target groups) and nothing more.
-module "alb_irsa" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.44"
+# The controller's IAM comes from EKS Pod Identity, not IRSA. The role trusts
+# pods.eks.amazonaws.com and is bound to a namespace/service-account by an
+# association resource below — so the trust policy carries no OIDC issuer URL
+# and the same role definition works unchanged if the cluster is rebuilt.
+module "alb_pod_identity" {
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.0"
 
-  role_name                              = "${local.name}-alb-controller"
-  attach_load_balancer_controller_policy = true
+  name                            = "${local.name}-alb-controller"
+  attach_aws_lb_controller_policy = true
 
-  oidc_providers = {
+  associations = {
     main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["kube-system:aws-load-balancer-controller"]
+      cluster_name    = module.eks.cluster_name
+      namespace       = "kube-system"
+      service_account = "aws-load-balancer-controller"
     }
   }
 
@@ -26,34 +28,18 @@ resource "helm_release" "alb_controller" {
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"
   namespace  = "kube-system"
-  version    = "1.8.1"
+  version    = "1.14.0"
 
-  set {
-    name  = "clusterName"
-    value = module.eks.cluster_name
-  }
-  set {
-    name  = "region"
-    value = var.region
-  }
-  set {
-    name  = "vpcId"
-    value = module.vpc.vpc_id
-  }
-  set {
-    name  = "serviceAccount.create"
-    value = "true"
-  }
-  set {
-    name  = "serviceAccount.name"
-    value = "aws-load-balancer-controller"
-  }
-  set {
-    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = module.alb_irsa.iam_role_arn
-  }
+  # helm provider v3: `set` is a list of objects, not repeated blocks.
+  set = [
+    { name = "clusterName", value = module.eks.cluster_name },
+    { name = "region", value = var.region },
+    { name = "vpcId", value = module.vpc.vpc_id },
+    { name = "serviceAccount.create", value = "true" },
+    { name = "serviceAccount.name", value = "aws-load-balancer-controller" },
+  ]
 
-  depends_on = [module.eks]
+  depends_on = [module.eks, module.alb_pod_identity]
 }
 
 resource "helm_release" "metrics_server" {
@@ -61,12 +47,11 @@ resource "helm_release" "metrics_server" {
   repository = "https://kubernetes-sigs.github.io/metrics-server/"
   chart      = "metrics-server"
   namespace  = "kube-system"
-  version    = "3.12.1"
+  version    = "3.13.0"
 
-  set {
-    name  = "args[0]"
-    value = "--kubelet-insecure-tls"
-  }
+  set = [
+    { name = "args[0]", value = "--kubelet-insecure-tls" },
+  ]
 
   depends_on = [module.eks]
 }

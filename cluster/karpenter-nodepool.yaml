@@ -1,0 +1,54 @@
+# Karpenter's "what may I launch?" policy. Applied after the controller is up.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiFamily: AL2023
+  amiSelectorTerms:
+    - alias: al2023@latest
+  role: eks-platform-karpenter-node
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-platform
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-platform
+  tags:
+    Project: aws-eks-platform
+    ManagedBy: karpenter
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        # Spot first. Karpenter drains on the interruption notice, and the app
+        # has a PDB + preStop drain already, so an interruption is survivable.
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["c", "m", "t"]
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["4"]
+      expireAfter: 336h # recycle nodes fortnightly so AMI patches land
+  limits:
+    cpu: "16"
+  disruption:
+    # Consolidate under-used nodes away — this is the line that actually saves
+    # money versus a fixed ASG.
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m

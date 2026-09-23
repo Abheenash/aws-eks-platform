@@ -1,5 +1,7 @@
 # AWS EKS Platform — a production-shaped Kubernetes app on AWS
 
+> **Sep 2026 (v3 — modernisation):** EKS 1.31 → **1.35** (1.31 left standard support 2025-11-25 and was billing extended-support), EKS module 20 → **21**, **Karpenter** with Spot + consolidation replacing fixed node-group scaling, **EKS Pod Identity** replacing IRSA, **Argo CD** app-of-apps so CI no longer holds cluster-admin, AWS provider 5 → **6**, helm provider 2 → **3**, plus an **OpenShift port** of the workload with the SCC differences written up. `terraform validate` clean; not re-applied.
+>
 > **Sep 2026:** both drill findings fixed — preStop drain + readiness 503 on SIGTERM + 15 s deregistration delay; CPU work in a child process with separate liveness/readiness/startup probes; PDB; kubeconform + manifest policy CI; runtime image without pip (validated, not re-drilled).
 
 Running a containerized microservice on **Amazon EKS** the way a real team would:
@@ -24,6 +26,56 @@ honest findings in [`docs/RESULTS-2026-07-12.md`](docs/RESULTS-2026-07-12.md).
 > `terraform destroy`. A full build-and-demo burst is ~$0.50–1. The Terraform
 > makes it reproducible on demand for interviews. Cost breakdown in
 > [`docs/cost.md`](docs/cost.md).
+
+## v3 (Sep 2026) — paying down a year of drift
+
+The v2 cluster was correct when it was built and quietly went stale: **EKS 1.31 left
+standard support on 2025-11-25**, so the cluster had moved onto extended support and was
+billing $0.60/cluster/hour for the privilege. That is the honest reason this version exists —
+infrastructure rots even when nobody touches it, and noticing is the job.
+
+| Area | v2 | v3 | Why it matters |
+| --- | --- | --- | --- |
+| **Kubernetes** | 1.31 (extended support, paid) | **1.35** (standard support) | Stops the extended-support charge and gets security patches again |
+| **EKS module** | `~> 20.24` | **`~> 21.0`** | `cluster_name`→`name`, `cluster_version`→`kubernetes_version`, `cluster_addons`→`addons`; IRSA helpers removed |
+| **Workload IAM** | IRSA (OIDC trust policy per service account) | **EKS Pod Identity** | No per-cluster OIDC provider, no issuer URL baked into the trust policy — the role survives a cluster rebuild unchanged |
+| **Node capacity** | fixed managed node group, ON_DEMAND, one instance type | **Karpenter** — instance type chosen per pending pod, Spot-first, `WhenEmptyOrUnderutilized` consolidation, 14-day node expiry | A fixed ASG can only scale a shape someone guessed in advance; Karpenter also deletes nodes it no longer needs, which is where the cost actually falls |
+| **Delivery** | CI runs `kubectl apply` + `set image` | **Argo CD app-of-apps**; CI writes the image tag to git and pushes | CI no longer holds cluster-admin. The cluster pulls its own desired state, and `selfHeal`/`prune` make drift impossible to leave behind |
+| **Providers** | aws `~> 5.60`, helm `~> 2.14` | **aws `~> 6.0`, helm `~> 3.0`** | helm v3 moved to the plugin framework: `kubernetes` is an object attribute and `set` is a list, not repeated blocks |
+| **Staying current** | nothing | **Renovate + pre-commit + tflint** | The drift above went unnoticed for a year. This is the part that makes v4 unnecessary |
+
+### What Karpenter and Argo CD actually changed
+
+The `system` managed node group is deliberately kept — it is where Karpenter's own
+controller runs, so the component that creates nodes never depends on a node it created.
+Everything else lands on Karpenter capacity: `cluster/karpenter-nodepool.yaml` allows
+`c`/`m`/`t` families from generation 5 up, Spot first, with a 16-vCPU ceiling.
+
+Argo CD inverts the delivery direction. `gitops/root-app` is one Application pointing at
+`gitops/apps/`, so adding a workload is a file in git — no `terraform apply`, no `kubectl`.
+The deploy workflow's only remaining job is to build the image and rewrite one `image:` line;
+the commit *is* the deployment. It needs no AWS credentials and no cluster access.
+
+### Running it somewhere that isn't EKS
+
+[`openshift/`](openshift/) is the same workload under OpenShift, and
+[`docs/openshift.md`](docs/openshift.md) is the porting write-up. The short
+version: OpenShift's `restricted-v2` SCC injects an arbitrary UID per namespace,
+so `runAsUser: 10001` gets the pod rejected outright — and that one constraint
+cascades into image ownership, `HOME`, and anything that calls `getpwuid()`.
+Ingress becomes a Route and the Service drops from NodePort to ClusterIP.
+
+What *didn't* change is the interesting half: both probes, the 15-second `preStop`
+and the 45-second grace period — the fix for the drill finding below — port
+unaltered, because that was never an ALB problem.
+
+Manifests only; I have no OpenShift cluster and the doc says so rather than
+implying otherwise.
+
+> **Status:** `terraform validate` clean against the real modules (EKS 21.26.0, VPC 6.7.3,
+> pod-identity 2.9.0, AWS provider 6.66.0). **Not re-applied** — the drill numbers quoted
+> below are still v2's, measured on 2026-07-12. The v3 cluster has not been stood up, so
+> nothing here claims measured evidence it doesn't have.
 
 ## v2 (Sep 2026) — the drill findings, fixed and pinned
 
@@ -102,9 +154,14 @@ GitHub Actions (OIDC, no keys)
 
 ```
 app/            small containerized microservice + Dockerfile
-terraform/      VPC, EKS, node group, IRSA, ALB controller, addons
-k8s/ | chart/   Kubernetes manifests / Helm chart (Deployment, Service, Ingress, HPA)
-.github/        OIDC-authenticated build + deploy pipeline
+terraform/      VPC, EKS, system node group, Karpenter, Pod Identity, ALB controller, Argo CD
+k8s/            namespaced workload manifests (Deployment, Service, Ingress, HPA, PDB)
+                — the path Argo CD's `web` Application syncs into the demo namespace
+cluster/        cluster-scoped manifests (Karpenter EC2NodeClass + NodePool), kept out
+                of k8s/ so the namespaced Application never tries to namespace them
+gitops/         Argo CD app-of-apps: root-app/ is the root chart, apps/ holds one
+                Application per workload — add a file here, no terraform apply
+.github/        OIDC build pipeline; the deploy job writes the image tag to git
 docs/           architecture, cost model, runbook, drill results
 iam/            OIDC trust + deploy policy (committed for transparency)
 ```

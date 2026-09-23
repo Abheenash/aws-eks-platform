@@ -1,0 +1,4 @@
+# The git repo Argo CD reconciles from. Override at install time if the repo moves.
+repoURL: https://github.com/Abheenash/aws-eks-platform.git
+targetRevision: main
+appsPath: gitops/apps

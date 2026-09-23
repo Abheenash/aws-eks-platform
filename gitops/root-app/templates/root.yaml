@@ -1,0 +1,29 @@
+# One Application that points at a directory of Applications. Adding a workload
+# means committing a file to gitops/apps/ — no terraform apply, no kubectl.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.targetRevision }}
+    path: {{ .Values.appsPath }}
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      # prune removes what git no longer declares; selfHeal reverts anything
+      # changed directly in the cluster. Together they make drift impossible
+      # to leave behind — which is the whole point of doing this.
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -11,9 +11,9 @@ variable "name_prefix" {
 }
 
 variable "cluster_version" {
-  description = "EKS Kubernetes version"
+  description = "EKS Kubernetes version (must be in EKS standard support — 1.31 fell out of it on 2025-11-25)"
   type        = string
-  default     = "1.31"
+  default     = "1.35"
 }
 
 variable "node_instance_type" {

@@ -1,0 +1,21 @@
+# The demo workload, delivered by Argo CD instead of `kubectl apply` from CI.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Abheenash/aws-eks-platform.git
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true

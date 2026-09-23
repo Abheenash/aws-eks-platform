@@ -1,0 +1,20 @@
+# Cluster-scoped Karpenter policy, delivered by Argo CD like everything else.
+# Kept out of k8s/ so the `web` Application never tries to namespace it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter-nodepool
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Abheenash/aws-eks-platform.git
+    targetRevision: main
+    path: cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }

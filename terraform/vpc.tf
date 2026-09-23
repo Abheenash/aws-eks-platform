@@ -1,6 +1,6 @@
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.8"
+  version = "~> 6.0"
 
   name = "${local.name}-vpc"
   cidr = "10.0.0.0/16"
@@ -17,8 +17,13 @@ module "vpc" {
   enable_dns_hostnames = true
 
   # Subnet tags the AWS Load Balancer Controller uses for auto-discovery.
-  public_subnet_tags  = { "kubernetes.io/role/elb" = "1" }
-  private_subnet_tags = { "kubernetes.io/role/internal-elb" = "1" }
+  # The karpenter.sh/discovery tag is how Karpenter finds subnets to launch
+  # nodes into — without it the EC2NodeClass selector matches nothing.
+  public_subnet_tags = { "kubernetes.io/role/elb" = "1" }
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb" = "1"
+    "karpenter.sh/discovery"          = local.name
+  }
 
   tags = local.tags
 }

@@ -7,9 +7,11 @@ on:
   workflow_dispatch:
 
 # Keyless auth to AWS via GitHub OIDC — no static access keys anywhere.
+# contents: write is what lets the deploy job commit the new image tag back to
+# git; that commit IS the deployment now, and Argo CD reconciles it.
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 env:
   AWS_REGION: us-east-1
@@ -25,7 +27,7 @@ jobs:
     outputs:
       image: ${{ steps.img.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -50,28 +52,43 @@ jobs:
           docker push "$REG/$ECR_REPO:latest"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-  deploy:
+  # GitOps: CI does not talk to the cluster at all. It writes the new image tag
+  # into k8s/deployment.yaml and pushes; Argo CD (running inside the cluster)
+  # notices the commit and reconciles. This is why the deploy job needs no AWS
+  # credentials and no kubectl — the cluster pulls, CI does not push.
+  release:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Deploy to EKS (skips cleanly if the cluster is destroyed)
+      - name: Pin the new image in the manifest
         env:
           IMAGE: ${{ needs.build.outputs.image }}
         run: |
-          if ! aws eks describe-cluster --name "$CLUSTER" --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "::notice::Cluster '$CLUSTER' not found — build->prove->destroy model, skipping deploy. Image is pushed to ECR and ready."
+          # Rewrite only the app container's image line, leave everything else.
+          before=$(grep -c '^\s*image:' k8s/deployment.yaml)
+          if [ "$before" -ne 1 ]; then
+            echo "::error::expected exactly one 'image:' line in k8s/deployment.yaml, found $before"
+            exit 1
+          fi
+          sed -i -E "s|^(\s*image:\s*).*|\1${IMAGE}|" k8s/deployment.yaml
+          grep '^\s*image:' k8s/deployment.yaml
+
+      - name: Commit the release
+        run: |
+          if git diff --quiet; then
+            echo "::notice::Manifest already at this image — nothing to release."
             exit 0
           fi
-          aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
-          kubectl apply -f k8s/
-          kubectl -n demo set image deployment/web app="$IMAGE"
-          kubectl -n demo rollout status deployment/web --timeout=180s
-          kubectl -n demo get pods -o wide
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/deployment.yaml
+          git commit -m "release: ${GITHUB_SHA::12}"
+          git push
+
+      - name: Where to watch it land
+        run: |
+          echo "::notice::Argo CD reconciles within ~3 min. Watch with:"
+          echo "  kubectl -n argocd port-forward svc/argocd-server 8080:80"
+          echo "  argocd app get web"

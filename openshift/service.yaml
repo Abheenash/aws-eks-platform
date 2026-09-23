@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: demo
+  labels: { app: web }
+spec:
+  # ClusterIP, not the EKS side's NodePort: the Route targets the Service
+  # directly, so nothing needs to be exposed on the nodes.
+  type: ClusterIP
+  selector: { app: web }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
