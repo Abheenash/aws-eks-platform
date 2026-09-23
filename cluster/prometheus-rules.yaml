@@ -1,0 +1,83 @@
+# Alert rules as code.
+#
+# These are the same SLO shapes as cloud-observability-sre's CloudWatch alarms,
+# expressed in PromQL — deliberately, so the two repos can be compared. The
+# multi-window burn-rate pattern is the important one: it pages only when the
+# error budget is being consumed fast enough to matter AND the burn is still
+# happening, which is what stops a page firing for an incident that already ended.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: web-slo
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: web.slo
+      interval: 30s
+      rules:
+        # --- recording rules: compute the ratio once, alert on it many times ---
+        - record: job:web_request_error_ratio:rate5m
+          expr: |
+            sum(rate(http_requests_total{route!="unmatched",status=~"5.."}[5m]))
+              /
+            clamp_min(sum(rate(http_requests_total{route!="unmatched"}[5m])), 0.001)
+        - record: job:web_request_error_ratio:rate1h
+          expr: |
+            sum(rate(http_requests_total{route!="unmatched",status=~"5.."}[1h]))
+              /
+            clamp_min(sum(rate(http_requests_total{route!="unmatched"}[1h])), 0.001)
+
+        # --- multi-window burn rate against a 99.5% availability SLO ---
+        # 14.4x burn over 1h exhausts a 30-day budget in ~2 days. The 5m window
+        # confirms it is still burning right now.
+        - alert: WebErrorBudgetBurningFast
+          expr: |
+            job:web_request_error_ratio:rate1h > (14.4 * 0.005)
+            and
+            job:web_request_error_ratio:rate5m > (14.4 * 0.005)
+          for: 2m
+          labels: { severity: page }
+          annotations:
+            summary: "Error budget burning 14.4x — page"
+            description: "5xx ratio is {{ $value | humanizePercentage }} over 1h and still climbing."
+
+        - alert: WebErrorBudgetBurningSlow
+          expr: |
+            job:web_request_error_ratio:rate1h > (6 * 0.005)
+          for: 15m
+          labels: { severity: ticket }
+          annotations:
+            summary: "Error budget burning 6x — ticket"
+
+        # --- latency SLO: p95 under 500ms ---
+        - alert: WebLatencyP95High
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{route!="unmatched"}[5m]))
+            ) > 0.5
+          for: 10m
+          labels: { severity: ticket }
+          annotations:
+            summary: "p95 latency above the 500ms SLO"
+
+        # --- the one the error alarms cannot catch ---
+        # No requests AND no errors looks identical to a healthy quiet period to
+        # a ratio alert. This is the compensating control, and it is why the
+        # ratio alerts above can safely ignore missing data.
+        - alert: WebNoTraffic
+          expr: sum(rate(http_requests_total[5m])) == 0
+          for: 10m
+          labels: { severity: ticket }
+          annotations:
+            summary: "No requests reaching the app for 10 minutes — the front door may be down"
+
+        - alert: WebPodsNotReady
+          expr: |
+            kube_deployment_status_replicas_available{namespace="demo",deployment="web"} < 1
+          for: 2m
+          labels: { severity: page }
+          annotations:
+            summary: "No available replicas for web"

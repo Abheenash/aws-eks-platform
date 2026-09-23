@@ -1,5 +1,7 @@
 # AWS EKS Platform — a production-shaped Kubernetes app on AWS
 
+> **Sep 2026 (v4):** **Prometheus + Grafana** on the cluster — kube-prometheus-stack, a ServiceMonitor, multi-window burn-rate PrometheusRules, and a Grafana dashboard provisioned from version-controlled JSON. The app now exports metrics labelled by matched ROUTE, not raw path, with a test that fires 25 distinct 404s and asserts exactly one series. Plus an OpenShift port. `terraform validate` clean; not applied.
+>
 > **Sep 2026 (v3 — modernisation):** EKS 1.31 → **1.35** (1.31 left standard support 2025-11-25 and was billing extended-support), EKS module 20 → **21**, **Karpenter** with Spot + consolidation replacing fixed node-group scaling, **EKS Pod Identity** replacing IRSA, **Argo CD** app-of-apps so CI no longer holds cluster-admin, AWS provider 5 → **6**, helm provider 2 → **3**, plus an **OpenShift port** of the workload with the SCC differences written up. `terraform validate` clean; not re-applied.
 >
 > **Sep 2026:** both drill findings fixed — preStop drain + readiness 503 on SIGTERM + 15 s deregistration delay; CPU work in a child process with separate liveness/readiness/startup probes; PDB; kubeconform + manifest policy CI; runtime image without pip (validated, not re-drilled).
@@ -55,6 +57,20 @@ Argo CD inverts the delivery direction. `gitops/root-app` is one Application poi
 `gitops/apps/`, so adding a workload is a file in git — no `terraform apply`, no `kubectl`.
 The deploy workflow's only remaining job is to build the image and rewrite one `image:` line;
 the commit *is* the deployment. It needs no AWS credentials and no cluster access.
+
+### Observability: the other stack
+
+[`docs/observability.md`](docs/observability.md) is the companion to
+`cloud-observability-sre`: the same golden signals and the same SLO, answered
+with **Prometheus and Grafana** instead of CloudWatch. Three things genuinely
+differ — pull-based discovery (and why `serviceMonitorSelectorNilUsesHelmValues`
+is the reason your service "isn't being scraped"), histogram buckets as a
+decision you make *before* you need the percentile, and cardinality as an
+availability risk rather than a cost line.
+
+That last one is why the middleware labels by **matched route template** and
+collapses everything else to `unmatched`, and why `tests/test_metrics.py` fires
+25 distinct 404s and asserts exactly one series comes out.
 
 ### Running it somewhere that isn't EKS
 

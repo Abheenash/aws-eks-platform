@@ -1,0 +1,7 @@
+
+[lint.isort]
+# app/ and tests/ are added to sys.path at runtime (the container's WORKDIR is
+# /app, so `main` is a top-level module). Without this, ruff classifies them as
+# third-party from one cwd and first-party from another, and the two orderings
+# fight each other.
+known-first-party = ["main"]

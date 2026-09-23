@@ -1,0 +1,23 @@
+# Tells Prometheus to scrape the app. Without this the /metrics endpoint exists
+# and nothing ever reads it.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: web
+  namespace: demo
+  labels:
+    app: web
+    # kube-prometheus-stack is configured with
+    # serviceMonitorSelectorNilUsesHelmValues=false, so it picks this up from any
+    # namespace rather than only its own release.
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels: { app: web }
+  namespaceSelector:
+    matchNames: ["demo"]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

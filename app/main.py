@@ -12,6 +12,7 @@ liveness probe timed out — the old /burn was a pure-Python busy loop, which ho
 GIL, so the probe thread never ran. /burn now does its work in a child process; the
 API process stays responsive no matter how hard it's burning.
 """
+import contextlib
 import json
 import logging
 import multiprocessing
@@ -23,6 +24,13 @@ import threading
 import time
 
 from fastapi import FastAPI, Request, Response
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
 app = FastAPI(title="aws-eks-platform demo", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -48,10 +56,10 @@ def _on_term(signum, frame):
     _log.info(json.dumps({"pod": POD, "event": "draining", "signal": signum}))
 
 
-try:
+# Not the main thread when tests import the module from a worker, and signal
+# handlers can only be installed from the main thread.
+with contextlib.suppress(ValueError):
     signal.signal(signal.SIGTERM, _on_term)
-except ValueError:
-    pass  # not the main thread (tests import the module from a worker)
 
 
 def _burn_worker(seconds, out):
@@ -62,15 +70,60 @@ def _burn_worker(seconds, out):
     out.value = n
 
 
+# --- Prometheus metrics ------------------------------------------------------
+#
+# Labelled by the ROUTE TEMPLATE, never the raw path. Labelling with request.url.path
+# would mint a new time series per distinct URL, which is how a Prometheus falls over
+# — the classic high-cardinality mistake.
+REQUESTS = Counter(
+    "http_requests_total", "HTTP requests.", ["method", "route", "status"]
+)
+LATENCY = Histogram(
+    "http_request_duration_seconds", "HTTP request latency.", ["method", "route"],
+    # Buckets chosen around this service's actual behaviour and the SLO it is held
+    # to, not the library defaults: the p95 target is 500 ms.
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+IN_FLIGHT = Gauge("http_requests_in_flight", "Requests currently being served.")
+BUILD = Gauge("app_build_info", "Build metadata; always 1.", ["version", "pod"])
+BUILD.labels(version=os.environ.get("APP_VERSION", "dev"), pod=POD).set(1)
+
+
+def _route_of(request: Request) -> str:
+    """The matched route template ('/burn'), or 'unmatched' for a 404.
+
+    Returning request.url.path here would defeat the point: a scanner hitting
+    /wp-admin, /.env and a thousand other paths would create a thousand series.
+    """
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "unmatched"
+
+
 @app.middleware("http")
 async def access_log(request: Request, call_next):
     t0 = time.time()
-    response: Response = await call_next(request)
+    IN_FLIGHT.inc()
+    try:
+        response: Response = await call_next(request)
+    finally:
+        IN_FLIGHT.dec()
+    elapsed = time.time() - t0
+    route = _route_of(request)
+    # /metrics is excluded so the scrape does not measure itself.
+    if route != "/metrics":
+        REQUESTS.labels(request.method, route, str(response.status_code)).inc()
+        LATENCY.labels(request.method, route).observe(elapsed)
     if request.url.path not in ("/healthz", "/ready"):  # probes would drown the log
         _log.info(json.dumps({"pod": POD, "method": request.method, "path": request.url.path,
-                              "status": response.status_code, "ms": round((time.time() - t0) * 1000, 1)}))
+                              "status": response.status_code, "ms": round(elapsed * 1000, 1)}))
     response.headers["X-Pod"] = POD
     return response
+
+
+@app.get("/metrics")
+def metrics():
+    """Scrape endpoint. The ServiceMonitor in k8s/servicemonitor.yaml points here."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/healthz")
