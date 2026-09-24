@@ -8,6 +8,12 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
         args: [--allow-multiple-documents]
+        # Helm templates are Go templates that happen to end in .yaml; `{{ ... }}`
+        # in a value position is not valid YAML and never will be, so this hook
+        # can only ever fail on them. `helm lint` is the right tool for that
+        # directory. Excluding it is the fix; the alternative was a hook that
+        # every developer would learn to skip.
+        exclude: ^gitops/.*/templates/
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=512]

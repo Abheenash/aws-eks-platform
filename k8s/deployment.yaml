@@ -37,6 +37,18 @@ spec:
       #   2. the Ingress sets deregistration_delay = 15 s (default is 300 s)
       #   3. terminationGracePeriodSeconds > preStop + the drain -> no forced kill
       terminationGracePeriodSeconds: 45
+      # The app makes no Kubernetes API calls — no client library, no kubeconfig,
+      # nothing reading /var/run/secrets/kubernetes.io. Mounting a token it never
+      # uses just hands an attacker with code execution a credential for the API
+      # server. (checkov CKV_K8S_38.)
+      #
+      # This does NOT disable EKS Pod Identity: the Pod Identity webhook injects its
+      # own projected volume for the agent token, which is a separate mount from the
+      # default service-account token this turns off. Stated rather than demonstrated
+      # — this repo is validated and never applied, so there is no live EKS cluster to
+      # prove it on. What IS verified is the half that matters for the app itself:
+      # it has no Kubernetes client in requirements.txt and never reads the token.
+      automountServiceAccountToken: false
       containers:
         - name: app
           # CI overrides the tag via `kubectl set image`; :v1 is the default.

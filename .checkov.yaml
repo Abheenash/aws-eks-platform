@@ -1,8 +1,14 @@
 # Checkov config. `skip-check` is a REVIEWED baseline — each entry is an accepted
 # trade-off or a demonstrated false positive, with the reason. Everything else is
 # a hard gate: a NEW category of misconfiguration in a PR fails the build.
-directory:
-  - terraform
+# Scans the WHOLE repo, not just terraform/.
+#
+# This file used to say `directory: [terraform]`, and CI did not run checkov at
+# all — nine jobs, none of them this one — so the config sat here looking like a
+# gate while the only thing consuming it was a pre-commit hook nobody had run.
+# Running it found a real finding on the first go: CKV_K8S_38, the pod mounting a
+# service-account token for an API server it never talks to. Both deployments now
+# set automountServiceAccountToken: false, and CI has a checkov job.
 compact: true
 quiet: true
 skip-check:
@@ -12,3 +18,30 @@ skip-check:
   # a committed .terraform.lock.hcl. There is no commit hash to give — the check
   # only applies to git-sourced modules.
   - CKV_TF_1
+
+  # CKV_K8S_43 (image by digest) and CKV_K8S_15 (imagePullPolicy: Always) are the
+  # same concern twice: a mutable tag can be republished under you. The committed
+  # manifests carry `:v1` as a readable placeholder, and .github/workflows/deploy.yml
+  # substitutes `:${GITHUB_SHA::12}` — a tag that is immutable in practice because
+  # it names one commit and is never reused. `Always` on top of that would re-pull
+  # an identical layer set on every pod start for no benefit.
+  #
+  # Digest pinning is strictly stronger and is not adopted here for a stated reason:
+  # Argo CD reconciles these manifests from git, so a digest in the manifest means a
+  # bot commit per build. That is a real and common choice — it is just not this
+  # repo's, and pretending the check passes would be worse than saying so.
+  - CKV_K8S_43
+  - CKV_K8S_15
+
+  # CKV_DOCKER_2 wants a Docker HEALTHCHECK. In Kubernetes the kubelet's probes
+  # supersede it entirely — this deployment has three (startup /healthz, readiness
+  # /ready, liveness /healthz) and the kubelet never reads a HEALTHCHECK. Adding
+  # one would put a second, unused health definition in the tree that could drift
+  # from the real one.
+  - CKV_DOCKER_2
+
+  # CKV_K8S_40 wants an explicit high runAsUser. openshift/deployment.yaml
+  # deliberately omits it: OpenShift's restricted-v2 SCC allocates a UID from the
+  # namespace's range and REJECTS a pod that names its own. The AWS manifest does
+  # set runAsUser: 10001 and passes. docs/openshift.md is the write-up.
+  - CKV_K8S_40
