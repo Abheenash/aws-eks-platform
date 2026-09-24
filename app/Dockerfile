@@ -2,12 +2,12 @@
 # else: no pip, no setuptools, no compiler. (Trivy flagged HIGH CVEs in the copies of
 # msgpack/setuptools that pip vendors inside itself — a package manager the running
 # service never uses is attack surface for free.)
-FROM python:3.13-slim AS build
+FROM python:3.14-slim AS build
 WORKDIR /build
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 WORKDIR /app
 COPY --from=build /install /usr/local
 COPY main.py .
