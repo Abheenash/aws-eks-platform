@@ -1,5 +1,15 @@
 name: ci
 on: [push, pull_request]
+
+# Least privilege at the top of the file, so a job that forgets its own
+# `permissions:` block inherits read-only rather than the repository default.
+# checkov's CKV2_GHA_1 flagged the absence of this: with no top-level block, the
+# token a job gets depends on a repo setting nobody looks at, and on many repos
+# that setting is read/write. The two jobs that genuinely need more (CodeQL and
+# dependency-review) declare it themselves and override this.
+permissions:
+  contents: read
+
 jobs:
   app-tests:
     runs-on: ubuntu-latest

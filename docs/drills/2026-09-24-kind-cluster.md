@@ -30,6 +30,7 @@ drill pass.
 | 4 | Losing every replica at once | ❌ ~2 s outage (7 requests) — expected, measured |
 | 5 | A node drain respects the PDB and reschedules | ✅ 100/100 × HTTP 200 |
 | 6 | The HPA scales on CPU | ✅ 2 → 6 in 75 s, once metrics-server existed |
+| 7 | The NetworkPolicies isolate the namespace | ⚠️ the first version allowed everything — fixed, then verified |
 
 ---
 
@@ -215,6 +216,56 @@ chosen rather than discovered during an incident.
 
 ---
 
+## 7. The NetworkPolicies — written wrong, then proved right
+
+checkov's `CKV2_K8S_6` flagged that no pod in `demo` had a NetworkPolicy, which was
+true and worth fixing: with none, any compromised pod anywhere in the cluster can
+reach this one, and this one can reach the whole VPC.
+
+Testing them needs a CNI that enforces NetworkPolicy, and kind's default (kindnet)
+does not — it accepts the objects and enforces nothing. So this ran on a second kind
+cluster with `disableDefaultCNI: true` and **Calico v3.31.0**. That distinction is
+the same one that matters on EKS, where the VPC CNI needs
+`enableNetworkPolicy = "true"` before any of this does anything;
+`terraform/eks.tf` now sets it.
+
+**The first version of the policy allowed everything.** The rule meant to admit ALB
+traffic was written as:
+
+```yaml
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+```
+
+which reads like "allow port 8080" and means "allow port 8080 **from anywhere**" — a
+rule with no `from` matches every source, so it re-opened everything `default-deny`
+had just closed. Measured, not reasoned about:
+
+```
+                              before policies   with the broken rule   with the fix
+other/      -> web /healthz        200                 200             000 (timeout)
+monitoring/ -> web /metrics        200                 200             200
+```
+
+The middle column is the whole point of running it. Both the broken and the fixed
+policy are valid YAML, pass `kubeconform -strict`, and satisfy checkov — the only
+thing that told them apart was a pod in an unrelated namespace getting a 200.
+
+The fix also changed scope. The obvious `ipBlock` for an ALB is the VPC CIDR
+(`10.0.0.0/16`), and on EKS that is close to no restriction at all: the VPC CNI gives
+every **pod** a VPC address too, so "from the VPC" includes every pod in the cluster.
+The rule names the two public /24s where the ALB's ENIs actually live, leaving the
+private subnets — nodes and pods — outside the allowlist.
+
+Egress was checked the same way, from inside the running pod:
+
+```
+DNS resolve kubernetes.default: 10.96.0.1     <- allow-dns-egress works
+egress to 1.1.1.1:              URLError      <- default-deny holds
+```
+
 ## What this does not prove
 
 The Kubernetes layer ran; the AWS layer did not. Nothing here exercises the ALB
@@ -241,5 +292,14 @@ helm upgrade --install metrics-server metrics-server/metrics-server -n kube-syst
 kubectl apply -f cluster/prometheus-rules.yaml
 ```
 
-Teardown is `kind delete cluster --name eks-local`. The cluster for this drill was
-deleted afterwards; it costs nothing either way.
+The NetworkPolicy section needs a second cluster, because kindnet does not enforce
+NetworkPolicy:
+
+```sh
+kind create cluster --config local/kind-netpol.yaml   # disableDefaultCNI: true
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/manifests/calico.yaml
+kubectl apply -f k8s/networkpolicy.yaml
+```
+
+Teardown is `kind delete cluster --name eks-local` (and `--name np-test`). Both
+clusters for this drill were deleted afterwards; they cost nothing either way.

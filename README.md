@@ -1,12 +1,15 @@
 # AWS EKS Platform — a production-shaped Kubernetes app on AWS
 
-> **Sep 2026 (v5):** the Kubernetes layer **run for real on a local kind cluster** — free,
+> **Sep 2026 (v5):** the Kubernetes layer **run for real on local kind clusters** — free,
 > no AWS. Prometheus discovery, every alert expression, a rolling deploy, a hard kill of
-> every replica, a node drain and the HPA were all exercised against a real API server and
-> real kubelets. It found three bugs that `terraform validate` and `kubeconform` cannot
-> see: `WebNoTraffic` could never fire (an empty vector is not zero), the error-budget
-> recording rule returned nothing instead of 0, and `app_build_info` exported a `pod` label
-> that collided with the one service discovery attaches. All fixed and re-verified.
+> every replica, a node drain, the HPA and the NetworkPolicies were all exercised against a
+> real API server and real kubelets. It found five bugs that `terraform validate`,
+> `kubeconform` and checkov all pass: `WebNoTraffic` could never fire (an empty vector is
+> not zero), the error-budget recording rule returned nothing instead of 0, `app_build_info`
+> exported a `pod` label that collided with the one service discovery attaches, the pod
+> mounted a service-account token for an API server it never talks to, and the first
+> NetworkPolicy I wrote allowed every source instead of one — an ingress rule with `ports`
+> and no `from`. All fixed and re-verified.
 > Measured numbers in [`docs/drills/2026-09-24-kind-cluster.md`](docs/drills/2026-09-24-kind-cluster.md).
 >
 > **Sep 2026 (v4):** **Prometheus + Grafana** on the cluster — kube-prometheus-stack, a ServiceMonitor, multi-window burn-rate PrometheusRules, and a Grafana dashboard provisioned from version-controlled JSON. The app now exports metrics labelled by matched ROUTE, not raw path, with a test that fires 25 distinct 404s and asserts exactly one series. Plus an OpenShift port. `terraform validate` clean; not applied.

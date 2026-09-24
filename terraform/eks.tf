@@ -14,9 +14,17 @@ module "eks" {
   # an OIDC trust policy, so there is no per-cluster OIDC provider to manage and
   # the role trust document no longer hard-codes a namespace/service-account pair.
   addons = {
-    coredns                = {}
-    kube-proxy             = {}
-    vpc-cni                = {}
+    coredns    = {}
+    kube-proxy = {}
+    # NetworkPolicy enforcement is OFF in the VPC CNI by default, and a
+    # NetworkPolicy applied to a cluster without it is accepted by the API server
+    # and enforces nothing — the worst kind of security control, one that reports
+    # success. k8s/networkpolicy.yaml depends on this flag being set.
+    vpc-cni = {
+      configuration_values = jsonencode({
+        enableNetworkPolicy = "true"
+      })
+    }
     eks-pod-identity-agent = {}
   }
 

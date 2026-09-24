@@ -1,0 +1,99 @@
+# Default-deny, then allow exactly what the app needs.
+#
+# checkov's CKV2_K8S_6 flagged the absence of this, and the finding is real: with
+# no NetworkPolicy in the namespace, any compromised pod anywhere in the cluster
+# can reach this one on any port, and this one can reach anything — including the
+# EC2 instance metadata endpoint and the rest of the VPC.
+#
+# This only enforces if the CNI implements NetworkPolicy. On EKS that means the
+# VPC CNI with enableNetworkPolicy=true, which terraform/eks.tf now sets; without
+# it the API server accepts these objects and silently enforces nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: demo
+spec:
+  # An empty podSelector means every pod in the namespace.
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Ingress from the ALB. Its targets are pod IPs directly (target-type: ip) and its
+# ENIs live in the VPC rather than the pod network, so there is no pod or namespace
+# to select — an ipBlock scoped to the VPC CIDR is the only way to express it.
+#
+# The first version of this rule had `ports:` and no `from:`, which reads like
+# "allow port 8080" and actually means "allow port 8080 FROM ANYWHERE". A rule with
+# no `from` matches every source, so it re-opened everything the default-deny above
+# had just closed. Verified on a live Calico cluster: with that version, a pod in an
+# unrelated namespace still got HTTP 200; with this one it gets nothing. An empty
+# `from` is the single easiest way to turn a NetworkPolicy into decoration.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alb-to-web
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels: { app: web }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # The PUBLIC subnets only (terraform/vpc.tf: public_subnets), because that
+        # is where the internet-facing ALB's ENIs are placed. The obvious version
+        # of this rule uses the whole VPC CIDR, 10.0.0.0/16 — and on EKS that is
+        # close to no restriction at all, because the VPC CNI gives every pod a
+        # VPC address too, so "from the VPC" includes every pod in the cluster.
+        # Naming the two public /24s keeps the private subnets (10.0.1.0/24,
+        # 10.0.2.0/24), where the nodes and pods live, outside the allowlist.
+        - ipBlock:
+            cidr: 10.0.101.0/24
+        - ipBlock:
+            cidr: 10.0.102.0/24
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# Prometheus scrapes /metrics from the monitoring namespace. Without this rule the
+# default-deny above silently breaks the ServiceMonitor — the target goes down and
+# the only symptom is a dashboard that stops updating.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels: { app: web }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# Egress: DNS only. The app talks to nothing else — no database, no AWS API, no
+# outbound HTTP. If that ever changes, this file is where it has to be declared,
+# which is the point.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels: { app: web }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

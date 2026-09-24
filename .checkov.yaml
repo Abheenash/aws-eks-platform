@@ -45,3 +45,15 @@ skip-check:
   # namespace's range and REJECTS a pod that names its own. The AWS manifest does
   # set runAsUser: 10001 and passes. docs/openshift.md is the write-up.
   - CKV_K8S_40
+
+  # CKV_AWS_394 wants the aws_availability_zones data source to allowlist zones by
+  # zone-name or zone-id, so the result set cannot expand when AWS adds an AZ. The
+  # concern behind it is real and specific: if the AZ set shifts between applies,
+  # the VPC's subnets are destroyed and recreated.
+  #
+  # It does not apply here. terraform/main.tf takes `slice(..., 0, 2)` of a list the
+  # provider returns sorted, and in every AWS region new zones are appended with
+  # later suffixes — a new us-east-1g cannot sort ahead of 1a and 1b. Pinning by
+  # zone-name instead would hardcode region-specific strings and break `var.region`,
+  # trading a risk that cannot occur for one that can.
+  - CKV_AWS_394
