@@ -85,8 +85,15 @@ LATENCY = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
 IN_FLIGHT = Gauge("http_requests_in_flight", "Requests currently being served.")
-BUILD = Gauge("app_build_info", "Build metadata; always 1.", ["version", "pod"])
-BUILD.labels(version=os.environ.get("APP_VERSION", "dev"), pod=POD).set(1)
+# No `pod` label here on purpose. Prometheus's Kubernetes service discovery already
+# attaches pod, namespace, node and container to every sample it scrapes, and when
+# an exported label collides with a target label Prometheus keeps the target's and
+# renames ours to `exported_pod` — so a `pod` label here produces two
+# nearly-identical labels and queries that silently match neither. Confirmed in a
+# live cluster: the series came back as
+# app_build_info{pod="...", exported_pod="...", version="v1"}.
+BUILD = Gauge("app_build_info", "Build metadata; always 1.", ["version"])
+BUILD.labels(version=os.environ.get("APP_VERSION", "dev")).set(1)
 
 
 def _route_of(request: Request) -> str:

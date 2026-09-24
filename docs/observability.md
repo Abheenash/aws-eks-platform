@@ -27,6 +27,16 @@ common cause is the one this chart configures around:
 only discovers ServiceMonitors carrying its own release label — so the app's
 monitor in the `demo` namespace is ignored, with no error anywhere.
 
+Verified on a live cluster rather than asserted. With the override set, the
+rendered Prometheus CR carries `serviceMonitorSelector={}` and
+`serviceMonitorNamespaceSelector={}`, and the `demo/web` monitor was discovered
+even though the Helm release was named `kps` while the monitor's label says
+`release: kube-prometheus-stack` — a label matching nothing. Discovery worked
+anyway, which is the proof that the override, not the label, is what does the
+work. Both pods came back `health=up` with an empty `lastError`. Full run in
+[`drills/2026-09-24-kind-cluster.md`](drills/2026-09-24-kind-cluster.md), which
+also documents two alert expressions that parsed cleanly and could never fire.
+
 ### 2. Histogram buckets are a decision you make in advance
 
 CloudWatch computes p95 from the raw values it stored. Prometheus stores

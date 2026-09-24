@@ -1,5 +1,14 @@
 # AWS EKS Platform — a production-shaped Kubernetes app on AWS
 
+> **Sep 2026 (v5):** the Kubernetes layer **run for real on a local kind cluster** — free,
+> no AWS. Prometheus discovery, every alert expression, a rolling deploy, a hard kill of
+> every replica, a node drain and the HPA were all exercised against a real API server and
+> real kubelets. It found three bugs that `terraform validate` and `kubeconform` cannot
+> see: `WebNoTraffic` could never fire (an empty vector is not zero), the error-budget
+> recording rule returned nothing instead of 0, and `app_build_info` exported a `pod` label
+> that collided with the one service discovery attaches. All fixed and re-verified.
+> Measured numbers in [`docs/drills/2026-09-24-kind-cluster.md`](docs/drills/2026-09-24-kind-cluster.md).
+>
 > **Sep 2026 (v4):** **Prometheus + Grafana** on the cluster — kube-prometheus-stack, a ServiceMonitor, multi-window burn-rate PrometheusRules, and a Grafana dashboard provisioned from version-controlled JSON. The app now exports metrics labelled by matched ROUTE, not raw path, with a test that fires 25 distinct 404s and asserts exactly one series. Plus an OpenShift port. `terraform validate` clean; not applied.
 >
 > **Sep 2026 (v3 — modernisation):** EKS 1.31 → **1.35** (1.31 left standard support 2025-11-25 and was billing extended-support), EKS module 20 → **21**, **Karpenter** with Spot + consolidation replacing fixed node-group scaling, **EKS Pod Identity** replacing IRSA, **Argo CD** app-of-apps so CI no longer holds cluster-admin, AWS provider 5 → **6**, helm provider 2 → **3**, plus an **OpenShift port** of the workload with the SCC differences written up. `terraform validate` clean; not re-applied.
@@ -104,7 +113,7 @@ The 2026-07-12 run was honest about two things a happy-path demo hides. Both are
 
 Also: a **PodDisruptionBudget** (`minAvailable: 1`) so node drains can't evict below one replica, `revisionHistoryLimit`, structured JSON access logs with the pod name, API docs disabled, and a CI workflow — pytest, **kubeconform strict** validation, a **manifest policy check** (preStop present, grace > sleep, distinct probe endpoints, deregistration delay matching, PDB present), `terraform validate`, and an image build with a non-root assertion and Trivy.
 
-The cluster is torn down (build → prove → destroy), so the fixes are validated, not re-drilled; re-running the self-heal drill to confirm 0 of 400 is the next live session.
+The cluster is torn down (build → prove → destroy), so these fixes were validated but not re-drilled on EKS. They have since been re-drilled **locally on kind**, which exercises the same manifests against a real API server and real kubelets for nothing: a rolling restart served 40 of 40 requests, and a node drain served 100 of 100. See [`docs/drills/2026-09-24-kind-cluster.md`](docs/drills/2026-09-24-kind-cluster.md) — including the honest counter-test, where force-killing every replica at once still cost ~2 s of downtime, because no manifest can prevent that.
 
 ## Why this project
 

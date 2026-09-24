@@ -1,0 +1,20 @@
+# A local stand-in for the EKS cluster, for running the manifests in k8s/ and the
+# alert rules in cluster/prometheus-rules.yaml against a real API server and real
+# kubelets without an AWS bill. See docs/drills/2026-09-24-kind-cluster.md.
+#
+# Two workers, not one, on purpose: with a single node the topologySpreadConstraint
+# in k8s/deployment.yaml and the PodDisruptionBudget in k8s/pdb.yaml are both
+# trivially satisfied and prove nothing. Two is the smallest number that can show a
+# drain moving a pod and a spread constraint being honoured.
+#
+# What kind gives you honestly: the API server, the scheduler, kubelets, CNI,
+# probes, evictions, the HPA loop. What it cannot give you: the ALB Controller,
+# Karpenter provisioning real instances, EKS Pod Identity against real IAM, or the
+# ECR pull path. Those stay covered by `terraform validate` and `terraform test`.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: eks-local
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

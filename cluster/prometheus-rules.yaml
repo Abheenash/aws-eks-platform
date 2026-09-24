@@ -18,14 +18,22 @@ spec:
       interval: 30s
       rules:
         # --- recording rules: compute the ratio once, alert on it many times ---
+        #
+        # `or vector(0)` on the numerator is not decoration. With no 5xx in the
+        # window there are no matching series, `sum()` over nothing returns an
+        # EMPTY vector rather than 0, and empty/anything is empty — so the whole
+        # ratio vanishes instead of reading zero. Verified in a live cluster:
+        # without it the expression returned `[]`, with it `0`. The alerts below
+        # would not have fired wrongly, but the panel goes to a gap rather than a
+        # flat zero line, and "no data" becomes indistinguishable from "healthy".
         - record: job:web_request_error_ratio:rate5m
           expr: |
-            sum(rate(http_requests_total{route!="unmatched",status=~"5.."}[5m]))
+            (sum(rate(http_requests_total{route!="unmatched",status=~"5.."}[5m])) or vector(0))
               /
             clamp_min(sum(rate(http_requests_total{route!="unmatched"}[5m])), 0.001)
         - record: job:web_request_error_ratio:rate1h
           expr: |
-            sum(rate(http_requests_total{route!="unmatched",status=~"5.."}[1h]))
+            (sum(rate(http_requests_total{route!="unmatched",status=~"5.."}[1h])) or vector(0))
               /
             clamp_min(sum(rate(http_requests_total{route!="unmatched"}[1h])), 0.001)
 
@@ -67,8 +75,16 @@ spec:
         # No requests AND no errors looks identical to a healthy quiet period to
         # a ratio alert. This is the compensating control, and it is why the
         # ratio alerts above can safely ignore missing data.
+        #
+        # The `or vector(0)` matters MOST here. If the app disappears entirely,
+        # its series go stale and drop out after 5 minutes — at which point
+        # `sum(rate(...))` is an empty vector, `empty == 0` is empty, and this
+        # alert silently stops evaluating in precisely the outage it exists to
+        # catch. Proven in a live cluster against a selector that matches nothing:
+        # `sum(rate(...)) == 0` returned `[]`, `(sum(rate(...)) or vector(0)) == 0`
+        # returned `0`.
         - alert: WebNoTraffic
-          expr: sum(rate(http_requests_total[5m])) == 0
+          expr: (sum(rate(http_requests_total[5m])) or vector(0)) == 0
           for: 10m
           labels: { severity: ticket }
           annotations:
