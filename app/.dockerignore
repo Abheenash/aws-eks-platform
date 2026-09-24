@@ -1,0 +1,18 @@
+# The build context is this directory, so everything here is sent to the daemon
+# and anything COPY'd lands in a layer. __pycache__ is the one that matters:
+# bytecode compiled by the HOST Python, shipped into an image running a different
+# interpreter build. It is ignored at runtime because PYTHONDONTWRITEBYTECODE is
+# set, which makes it pure dead weight that nothing would ever notice.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Never ship the recipe or local env files inside the image.
+Dockerfile
+.dockerignore
+.env
+.env.*
