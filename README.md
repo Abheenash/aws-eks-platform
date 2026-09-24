@@ -1,5 +1,42 @@
 # AWS EKS Platform — a production-shaped Kubernetes app on AWS
 
+Running a containerized microservice on **Amazon EKS** the way a real team would:
+provisioned entirely in **Terraform**, node capacity from **Karpenter** on Spot, IAM
+through **EKS Pod Identity**, deployed by **Argo CD** so CI never holds cluster-admin,
+and observed with **Prometheus** burn-rate alerts.
+
+### The 30-second version
+
+An EKS control plane bills ~$0.10/hr for as long as it exists, so this project runs a
+**build → prove → destroy** loop rather than leaving a cluster up. The cluster is currently
+destroyed — which means the Terraform here is *validated, not applied*, and the README says
+so everywhere rather than implying otherwise.
+
+The Kubernetes layer is proven a different way: **on a local kind cluster, which is free.**
+That is not a substitute for EKS and the write-up says what it cannot cover. It is, however,
+a real API server and real kubelets — and running the manifests against it found **five bugs
+that `terraform validate`, `kubeconform` and checkov all pass**:
+
+| Found by running it | Why nothing else caught it |
+|---|---|
+| `WebNoTraffic` could never fire | `sum(rate(...)) == 0` is empty, not zero, once the app's metrics go stale — so the alert written to catch total silence stops evaluating in exactly that outage |
+| The error-budget rule returned nothing instead of `0` | Same trap: summing no series yields an empty result, and the SLO panel shows a gap where it should show a flat zero line |
+| `app_build_info` carried a colliding `pod` label | Service discovery attaches its own, so Prometheus renamed mine to `exported_pod` — queries then match one or the other, never reliably both |
+| The pod mounted a service-account token it never used | No Kubernetes client in `requirements.txt`; the token was pure upside for anyone getting code execution |
+| My first NetworkPolicy allowed **every** source | An ingress rule with `ports` and no `from` reads like "allow this port" and means "allow this port from anywhere" |
+
+Measured, not asserted: a rolling deploy served **40/40** requests and a node drain **100/100**,
+while force-killing every replica at once still cost **~2 s and 7 failed requests** — the
+counter-test is in the write-up too, because a drill that only runs the cases you expect to
+pass is not a drill.
+
+**→ [`docs/drills/2026-09-24-kind-cluster.md`](docs/drills/2026-09-24-kind-cluster.md)** is the
+thing worth reading.
+
+<details>
+<summary><b>Version history</b></summary>
+
+
 > **Sep 2026 (v5):** the Kubernetes layer **run for real on local kind clusters** — free,
 > no AWS. Prometheus discovery, every alert expression, a rolling deploy, a hard kill of
 > every replica, a node drain, the HPA and the NetworkPolicies were all exercised against a
@@ -18,10 +55,9 @@
 >
 > **Sep 2026:** both drill findings fixed — preStop drain + readiness 503 on SIGTERM + 15 s deregistration delay; CPU work in a child process with separate liveness/readiness/startup probes; PDB; kubeconform + manifest policy CI; runtime image without pip (validated, not re-drilled).
 
-Running a containerized microservice on **Amazon EKS** the way a real team would:
-provisioned entirely in **Terraform**, exposed through an **ALB Ingress**,
-**auto-scaled** on load, deployed by a **keyless GitHub Actions pipeline**, and
-proven resilient with a **pod-failure drill**.
+</details>
+
+---
 
 This is the *"can you run Kubernetes on AWS?"* project — the day-to-day platform
 skill most Cloud/DevOps roles ask for, on top of the serverless, container,
